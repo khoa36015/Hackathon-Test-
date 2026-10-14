@@ -1,0 +1,69 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Large Model weights
+*.weights
+*.onnx
+*.task
+
+# Video recordings & Evidence MP4s
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.webm
+
+# Snapshots & Image Artifacts
+*.jpg
+*.jpeg
+*.png
+!*.gitkeep
+
+# Specifically exclude output & records content but keep folder
+HUMAN DETECT/output/*
+!HUMAN DETECT/output/.gitkeep
+HUMAN DETECT/records/*
+!HUMAN DETECT/records/.gitkeep
+
+# Logs
+*.log
+detection_events.jsonl
+
+# Operating System & IDE
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+

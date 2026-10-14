@@ -24,8 +24,10 @@ class CameraRecorder:
         self,
         camera_index: int = 0,
         resolution: Tuple[int, int] = (640, 480),
-        record_full_session: bool = False,
+        record_full_session: bool = True,  # Mặc định ghi lại phiên làm việc
         auto_extract_evidence: bool = True,
+        max_humans: int = 10,
+        min_confidence: float = 0.25,
         output_dir: str = "output",
         records_dir: str = "records"
     ) -> None:
@@ -33,6 +35,8 @@ class CameraRecorder:
         self.width, self.height = resolution
         self.record_full_session = record_full_session
         self.auto_extract_evidence = auto_extract_evidence
+        self.max_humans = max_humans
+        self.min_confidence = min_confidence
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = output_dir if os.path.isabs(output_dir) else os.path.join(base_dir, output_dir)
         self.records_dir = records_dir if os.path.isabs(records_dir) else os.path.join(base_dir, records_dir)
@@ -51,16 +55,19 @@ class CameraRecorder:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            if actual_w <= 0 or actual_h <= 0:
+                actual_w, actual_h = resolution
             self.frame_size = (actual_w, actual_h)
             print(f"[CameraRecorder] Camera #{self.camera_index} connected: {actual_w}x{actual_h}")
         else:
             self.frame_size = resolution
             print(f"[CameraRecorder] Warning: Could not open camera #{self.camera_index}. Fallback to simulated stream.")
 
-        # Initialize AI Pose & Skeleton Detector
+        # Initialize AI Multi-Person Pose & Skeleton Detector
         self.detector = PoseSkeletonDetector(
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+            min_detection_confidence=self.min_confidence,
+            min_tracking_confidence=self.min_confidence,
+            max_humans=self.max_humans,
             model_complexity=1
         )
 
@@ -82,8 +89,8 @@ class CameraRecorder:
 
     def _start_session_recorder(self) -> None:
         """Starts recording the entire continuous camera session."""
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        output_file = os.path.join(self.records_dir, f"video_{timestamp}.mp4")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(self.records_dir, f"SESSION_{timestamp}_FULL.mp4")
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.session_writer = cv2.VideoWriter(output_file, fourcc, 20.0, self.frame_size)
         print(f"[CameraRecorder] Full continuous session recording started: {output_file}")
@@ -137,9 +144,9 @@ class CameraRecorder:
 
                     self.evidence_recorder.update(display_frame, is_human, now_str)
 
-                # 3. Full Session Continuous Recording (if enabled)
+                # 3. Full Session Continuous Recording (with skeletons burned in)
                 if self.session_writer is not None:
-                    self.session_writer.write(frame)
+                    self.session_writer.write(display_frame)
 
                 # 4. Display Frame
                 cv2.imshow(window_title, display_frame)
@@ -150,8 +157,8 @@ class CameraRecorder:
                     print("[CameraRecorder] Stopping camera recorder...")
                     break
                 elif key == ord('s'):
-                    snap_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    snap_path = os.path.join(self.output_dir, f"snapshot_{snap_time}.jpg")
+                    snap_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    snap_path = os.path.join(self.output_dir, f"SNAPSHOT_{snap_time}.jpg")
                     cv2.imwrite(snap_path, display_frame)
                     print(f"[CameraRecorder] Snapshot saved: {snap_path}")
                 elif key == ord('h'):
