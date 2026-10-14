@@ -134,8 +134,8 @@ class BatchHumanDetector:
         if not frames:
             return None
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"{base_name}_{timestamp}_seg{seg_idx}_human.mp4"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"EVIDENCE_{base_name}_{timestamp}_SEG{seg_idx:02d}.mp4"
         out_path = os.path.join(self.output_dir, filename)
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')

@@ -90,8 +90,8 @@ class EvidenceClipRecorder:
     def _start_recording(self, timestamp_str: str) -> None:
         """Starts a new video recording session and flushes pre-roll buffer."""
         self.event_counter += 1
-        safe_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.current_output_path = os.path.join(self.output_dir, f"video_{safe_time}_human.mp4")
+        safe_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_output_path = os.path.join(self.output_dir, f"EVIDENCE_{safe_time}_HUMAN.mp4")
         self.clip_start_time = timestamp_str
         self.clip_frame_count = 0
 
