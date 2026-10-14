@@ -1,43 +1,65 @@
 """
-Batch Human Detection & Skeleton Pose Processing for Recorded Videos.
-Enhanced replacement for original reference repo human_detection.py.
-Scans records/ folder, detects humans with skeleton indicators, and extracts clips to output/.
+Batch Human Detection & Behavior Processing for Recorded Videos.
+Enhanced replacement supporting YOLO11-Pose, ByteTrack, and Behavior Recognition.
+Scans records/ folder, detects humans with behavior indicators, and extracts clips to output/.
 """
 
 import os
 import cv2
+import numpy as np
 import argparse
 from datetime import datetime
 from typing import List, Optional
 
-from pose_detector import PoseSkeletonDetector
+try:
+    from yolo_pose_detector import YOLOPoseDetector
+    DEFAULT_DETECTOR = YOLOPoseDetector
+except Exception:
+    from pose_detector import PoseSkeletonDetector
+    DEFAULT_DETECTOR = PoseSkeletonDetector
 
 
 class BatchHumanDetector:
     """
     Processes pre-recorded video files from records/ directory,
-    detects human presence with pose skeletons, and extracts relevant video clips.
+    detects human presence with YOLO11-Pose & Behavior recognition,
+    and extracts relevant video clips into output/.
     """
 
     def __init__(
         self,
         records_dir: str = "records",
         output_dir: str = "output",
+        model_weights: str = "yolo11n-pose.pt",
+        device: Optional[str] = None,
         annotate_output: bool = True
     ) -> None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.records_dir = records_dir if os.path.isabs(records_dir) else os.path.join(base_dir, records_dir)
         self.output_dir = output_dir if os.path.isabs(output_dir) else os.path.join(base_dir, output_dir)
+        self.model_weights = model_weights
+        self.device = device
         self.annotate_output = annotate_output
 
         os.makedirs(self.records_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.detector = PoseSkeletonDetector(
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-            model_complexity=1
-        )
+        try:
+            self.detector = YOLOPoseDetector(
+                model_path=self.model_weights,
+                device=self.device,
+                conf_threshold=0.25,
+                fps=20.0
+            )
+            print("[BatchHumanDetector] Initialized with YOLOPoseDetector.")
+        except Exception as e:
+            print(f"[BatchHumanDetector] Fallback to PoseSkeletonDetector ({e})")
+            from pose_detector import PoseSkeletonDetector
+            self.detector = PoseSkeletonDetector(
+                min_detection_confidence=0.35,
+                min_tracking_confidence=0.35,
+                model_complexity=1
+            )
 
     def process_all_videos(self) -> List[str]:
         """Scans records/ and processes every supported video file."""
@@ -61,7 +83,7 @@ class BatchHumanDetector:
 
     def process_single_video(self, video_path: str) -> List[str]:
         """
-        Analyzes a single video file, finds segments containing humans,
+        Analyzes a single video file, finds segments containing humans and behaviors,
         and extracts them into output files using native OpenCV VideoWriter.
         """
         print(f"\n[BatchHumanDetector] Processing video: {video_path}")
@@ -80,9 +102,9 @@ class BatchHumanDetector:
         video_basename = os.path.splitext(os.path.basename(video_path))[0]
         output_files: List[str] = []
 
-        # Tracking segments
         in_segment = False
-        segment_frames: List[cv2.Mat] = []
+        segment_frames: List[np.ndarray] = []
+        segment_behaviors: List[str] = []
         segment_index = 0
         frame_idx = 0
 
@@ -99,76 +121,80 @@ class BatchHumanDetector:
             if analysis.has_human:
                 in_segment = True
                 segment_frames.append(target_frame)
+
+                # Collect behavior labels
+                if hasattr(analysis, 'humans'):
+                    for h in analysis.humans:
+                        if hasattr(h, 'behavior'):
+                            segment_behaviors.append(h.behavior.primary_behavior.value)
+
+                # Periodic progress log
+                if frame_idx % 30 == 0:
+                    pct = (frame_idx / max(1, total_frames)) * 100
+                    h_count = analysis.human_count
+                    threat = getattr(analysis, 'highest_threat_level', 'LOW')
+                    print(f"  Frame {frame_idx}/{total_frames} ({pct:.0f}%) -> {h_count} human(s) | Threat: {threat}")
+
             else:
                 if in_segment:
-                    # Segment just ended
-                    out_path = self._save_segment(segment_frames, video_basename, segment_index, fps, (width, height))
-                    if out_path:
-                        output_files.append(out_path)
+                    # Finalize current segment
                     segment_index += 1
+                    dominant_behavior = "ACTIVITY"
+                    if segment_behaviors:
+                        from collections import Counter
+                        dominant_behavior = Counter(segment_behaviors).most_common(1)[0][0]
+
+                    out_name = f"{video_basename}_seg{segment_index}_{dominant_behavior}.mp4"
+                    out_path = os.path.join(self.output_dir, out_name)
+                    self._save_frames_to_video(segment_frames, out_path, fps, (width, height))
+                    output_files.append(out_path)
+
                     segment_frames = []
+                    segment_behaviors = []
                     in_segment = False
 
-            if frame_idx % 30 == 0:
-                print(f"[BatchHumanDetector] Progress: {frame_idx}/{total_frames} frames ({(frame_idx / max(1, total_frames)) * 100:.1f}%)")
-
-        # Handle segment extending to the end of the video
+        # Final segment flush if video ended with human present
         if in_segment and segment_frames:
-            out_path = self._save_segment(segment_frames, video_basename, segment_index, fps, (width, height))
-            if out_path:
-                output_files.append(out_path)
+            segment_index += 1
+            dominant_behavior = "ACTIVITY"
+            if segment_behaviors:
+                from collections import Counter
+                dominant_behavior = Counter(segment_behaviors).most_common(1)[0][0]
+
+            out_name = f"{video_basename}_seg{segment_index}_{dominant_behavior}.mp4"
+            out_path = os.path.join(self.output_dir, out_name)
+            self._save_frames_to_video(segment_frames, out_path, fps, (width, height))
+            output_files.append(out_path)
 
         cap.release()
-        print(f"[BatchHumanDetector] Finished {video_path}. Generated {len(output_files)} clip(s).")
+        print(f"[BatchHumanDetector] Done: Extracted {len(output_files)} incident segment(s) to {self.output_dir}/")
         return output_files
 
-    def _save_segment(
+    def _save_frames_to_video(
         self,
-        frames: List[cv2.Mat],
-        base_name: str,
-        seg_idx: int,
+        frames: List[np.ndarray],
+        output_path: str,
         fps: float,
-        size: tuple
-    ) -> Optional[str]:
-        """Saves accumulated frames into a new MP4 video file."""
+        frame_size: tuple
+    ) -> None:
+        """Writes buffered frames to an MP4 video file safely."""
         if not frames:
-            return None
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"EVIDENCE_{base_name}_{timestamp}_SEG{seg_idx:02d}.mp4"
-        out_path = os.path.join(self.output_dir, filename)
+            return
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(out_path, fourcc, fps, size)
-
+        writer = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
         for f in frames:
             writer.write(f)
-
         writer.release()
-        print(f"[BatchHumanDetector] Saved human segment: {out_path} ({len(frames)} frames)")
-        return out_path
-
-
-def process_videos():
-    """Entrypoint function compatible with original reference repo."""
-    detector = BatchHumanDetector()
-    outputs = detector.process_all_videos()
-    print("\nSummary of Generated Output Clips:")
-    for out in outputs:
-        print(f" -> {out}")
+        print(f"  -> Extracted incident segment: {os.path.basename(output_path)} ({len(frames)} frames)")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Batch Human Detection for Recorded Videos")
-    parser.add_argument("--records", type=str, default="records", help="Path to records directory")
-    parser.add_argument("--output", type=str, default="output", help="Path to output directory")
-    parser.add_argument("--raw", action="store_true", help="Save raw frames instead of skeleton-annotated frames")
+    parser = argparse.ArgumentParser(description="Batch Video Pose & Behavior Extractor")
+    parser.add_argument("--records-dir", type=str, default="records", help="Input directory containing video files")
+    parser.add_argument("--output-dir", type=str, default="output", help="Output directory for incident clips")
+    parser.add_argument("--weights", type=str, default="yolo11n-pose.pt", help="YOLO11 weights")
     args = parser.parse_args()
 
-    batch_detector = BatchHumanDetector(
-        records_dir=args.records,
-        output_dir=args.output,
-        annotate_output=not args.raw
-    )
-    batch_detector.process_all_videos()
-
+    detector = BatchHumanDetector(records_dir=args.records_dir, output_dir=args.output_dir, model_weights=args.weights)
+    detector.process_all_videos()
